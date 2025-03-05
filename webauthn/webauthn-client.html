@@ -1,0 +1,313 @@
+<!--
+ * Copyright (c) 2025 Matteo Bertozzi
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebAuthn Demo</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .card {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 20px;
+    }
+    button {
+      background-color: #4CAF50;
+      border: none;
+      color: white;
+      padding: 10px 15px;
+      text-align: center;
+      text-decoration: none;
+      display: inline-block;
+      font-size: 16px;
+      margin: 4px 2px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    input {
+      padding: 10px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    #status {
+      margin-top: 20px;
+      padding: 10px;
+      border-radius: 4px;
+    }
+    .success {
+      background-color: #d4edda;
+      color: #155724;
+    }
+    .error {
+      background-color: #f8d7da;
+      color: #721c24;
+    }
+    #log {
+      margin-top: 20px;
+      padding: 10px;
+      background-color: #f8f9fa;
+      border-radius: 4px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>WebAuthn</h1>
+
+  <div class="container">
+    <div class="card">
+      <h2>Registration</h2>
+      <input type="text" id="username" placeholder="Username">
+      <button id="register">Register with WebAuthn</button>
+    </div>
+
+    <div class="card">
+      <h2>Authentication</h2>
+      <button id="authenticate">Authenticate</button>
+    </div>
+
+    <div id="status"></div>
+    <div id="log"></div>
+  </div>
+
+  <script>
+    const apiUrl = 'http://localhost:57028';
+    const statusElem = document.getElementById('status');
+    const logElem = document.getElementById('log');
+
+    function showStatus(message, isError = false) {
+      statusElem.textContent = message;
+      statusElem.className = isError ? 'error' : 'success';
+    }
+
+    function log(message, data = null) {
+      const entry = document.createElement('div');
+      entry.textContent = message;
+
+      if (data) {
+        const dataEl = document.createElement('pre');
+        dataEl.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+        entry.appendChild(dataEl);
+      }
+
+      logElem.appendChild(entry);
+      logElem.scrollTop = logElem.scrollHeight;
+    }
+
+    // Base64URL to ArrayBuffer
+    function base64URLToArrayBuffer(base64url) {
+      const padding = '='.repeat((4 - base64url.length % 4) % 4);
+      const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/') + padding;
+      const binary = window.atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes.buffer;
+    }
+
+    // ArrayBuffer to Base64URL string
+    function arrayBufferToBase64URL(buffer) {
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return window.btoa(binary)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=/g, '');
+    }
+
+    // Register a new credential
+    document.getElementById('register').addEventListener('click', async () => {
+      const username = document.getElementById('username').value.trim();
+
+      if (!username) {
+        showStatus('Please enter a username', true);
+        return;
+      }
+
+      try {
+        // 1. Get challenge from server
+        log('Requesting challenge from server...');
+        const challengeResponse = await fetch(`${apiUrl}/webauthn/v0/register/options`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username })
+        });
+
+        if (!challengeResponse.ok) {
+          throw new Error('Failed to get challenge from server');
+        }
+
+        const { sessionId, options } = await challengeResponse.json();
+        log('Received challenge', options);
+
+        const publicKeyCredentialCreationOptions = {
+          ...options,
+          challenge: base64URLToArrayBuffer(options.challenge),
+          user: {
+            ...options.user,
+            id: base64URLToArrayBuffer(options.user.id),
+          },
+        };
+
+        log('Creating credential with options', publicKeyCredentialCreationOptions);
+        const credential = await navigator.credentials.create({
+          publicKey: publicKeyCredentialCreationOptions
+        });
+
+        console.log('CREDENTIAL', credential);
+        console.log(credential.response);
+        log('Credential created', credential.id);
+
+        // 3. Send credential to server
+        const credentialResponse = await fetch(`${apiUrl}/webauthn/v0/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            registration: {
+              id: credential.id,
+              rawId: arrayBufferToBase64URL(credential.rawId),
+              response: {
+                clientDataJSON: arrayBufferToBase64URL(credential.response.clientDataJSON),
+                attestationObject: arrayBufferToBase64URL(credential.response.attestationObject),
+                transports: credential.response.getTransports(),
+                publicKeyAlgorithm: credential.response.getPublicKeyAlgorithm(),
+                publicKey: arrayBufferToBase64URL(credential.response.getPublicKey()),
+              },
+              authenticatorAttachment: credential.authenticatorAttachment,
+              clientExtensionResults: credential.clientExtensionResults,
+              type: credential.type,
+            }
+          })
+        });
+
+        if (!credentialResponse.ok) {
+          const errorData = await credentialResponse.json();
+          throw new Error(errorData.error || 'Registration failed');
+        }
+
+        const result = await credentialResponse.json();
+        log('Registration result', result);
+        showStatus(`Registration successful! Credential ID: ${credential.id}`);
+      } catch (error) {
+        console.error('Registration error:', error);
+        log('Registration error', error.message);
+        showStatus(`Registration failed: ${error.message}`, true);
+      }
+    });
+
+    // Authenticate with existing credential
+    document.getElementById('authenticate').addEventListener('click', async () => {
+      try {
+        // 1. Get authentication options from server
+        log('Requesting login options from server...');
+        const optionsResponse = await fetch(`${apiUrl}/webauthn/v0/authenticate/options`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({  })
+        });
+
+        if (!optionsResponse.ok) {
+          throw new Error('Failed to get authentication options');
+        }
+
+        const { sessionId, options } = await optionsResponse.json();
+        log('Received authentication options', options);
+
+        // 2. Get credential
+        const publicKeyCredentialRequestOptions = {
+          ...options,
+          challenge: base64URLToArrayBuffer(options.challenge),
+          allowCredentials: options.allowCredentials?.map(cred => ({
+            ...cred,
+            id: base64URLToArrayBuffer(cred.id),
+          })),
+        };
+
+        log('Requesting credential with options', publicKeyCredentialRequestOptions);
+        const assertion = await navigator.credentials.get({
+          publicKey: publicKeyCredentialRequestOptions
+        });
+
+        log('Received assertion', assertion);
+
+        // 3. Verify with server
+        const verifyResponse = await fetch(`${apiUrl}/webauthn/v0/authenticate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            authentication: {
+              id: assertion.id,
+              rawId: arrayBufferToBase64URL(assertion.rawId),
+              response: {
+                clientDataJSON: arrayBufferToBase64URL(assertion.response.clientDataJSON),
+                authenticatorData: arrayBufferToBase64URL(assertion.response.authenticatorData),
+                signature: arrayBufferToBase64URL(assertion.response.signature),
+                userHandle: assertion.response.userHandle ?
+                  arrayBufferToBase64URL(assertion.response.userHandle) : null
+              },
+              clientExtensionResults: assertion.clientExtensionResults,
+              type: assertion.type,
+            }
+          })
+        });
+
+        if (!verifyResponse.ok) {
+          const errorData = await verifyResponse.json();
+          throw new Error(errorData.error || 'Authentication failed');
+        }
+
+        const result = await verifyResponse.json();
+        log('Authentication result', result);
+        showStatus(`Authentication successful! Welcome, ${assertion.id} ${arrayBufferToBase64URL(assertion.response.userHandle)}`);
+      } catch (error) {
+        console.error('Authentication error:', error);
+        log('Authentication error', error.message);
+        showStatus(`Authentication failed: ${error.message}`, true);
+      }
+    });
+  </script>
+</body>
+</html>

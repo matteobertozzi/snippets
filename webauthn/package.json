@@ -1,0 +1,21 @@
+{
+  "name": "webauthn",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build-info": "ak-ts-gen-build-info -o src/build-info.ts",
+    "serve": "bun run node_modules/@tashkewey/bun/src/main.ts -p 57028 -m $(pwd)/src"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@tashkewey/bun": "^0.9.417",
+    "@tashkewey/core": "^0.9.417",
+    "@easer-insights/core": "0.9.166"
+  },
+  "peerDependencies": {
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^13.1.1"
+  }
+}
