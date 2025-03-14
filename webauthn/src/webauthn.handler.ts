@@ -67,7 +67,12 @@ export class WebAuthnHandler {
       userID: userId,
       userName: message.body.username,
       userDisplayName: message.body.username,
-      authenticatorSelection: { userVerification: "required" },
+      authenticatorSelection: {
+        userVerification: 'required',
+        // require discoverable credentials (resident key)
+        residentKey: 'required',
+        requireResidentKey: true,
+      },
       timeout: 60_000,
     });
     console.log(sessionId, 'OPTIONS', options);
